@@ -280,9 +280,14 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+    
+    # DigitalOcean uses PORT environment variable
+    port = int(os.getenv("PORT", 8080))
+    
     uvicorn.run(
         "main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG
+        host="0.0.0.0",  # IMPORTANT: Bind to all interfaces
+        port=port,
+        reload=False  # No reload in production
     )
