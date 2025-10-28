@@ -52,6 +52,7 @@ app.add_middleware(
 
 
 # ============= Endpoints =============
+# IMPORTANT: Specific routes MUST come before wildcard routes
 
 @app.get("/")
 async def root():
@@ -62,15 +63,39 @@ async def root():
         "endpoints": {
             "POST /countries/refresh": "Fetch and cache country data",
             "GET /countries": "Get all countries (supports filters and sorting)",
+            "GET /countries/image": "Get summary image",
             "GET /countries/{name}": "Get specific country by name",
             "DELETE /countries/{name}": "Delete a country",
             "GET /status": "Get total countries and last refresh timestamp",
-            "GET /countries/image": "Get summary image",
             "/docs": "Interactive API documentation"
         }
     }
 
 
+@app.get("/status", response_model=StatusResponse)
+async def get_status(db: Session = Depends(get_db)):
+    """
+    Get total number of countries and last refresh timestamp.
+    
+    Returns:
+        StatusResponse with total countries and last refresh time
+    """
+    try:
+        total, last_refresh = get_database_status(db)
+        
+        return StatusResponse(
+            total_countries=total,
+            last_refreshed_at=last_refresh
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "Internal server error", "details": str(e)}
+        )
+
+
+# POST /countries/refresh - MUST be before /{name}
 @app.post("/countries/refresh", response_model=RefreshResponse, status_code=status.HTTP_200_OK)
 async def refresh_countries(db: Session = Depends(get_db)):
     """
@@ -99,7 +124,7 @@ async def refresh_countries(db: Session = Depends(get_db)):
         countries_processed = 0
         batch = []
         
-        for country in countries_data[:50]:  # Process first 50 for speed (or remove limit)
+        for country in countries_data:  # Process ALL countries
             try:
                 processed_data = process_country_data(country, exchange_rates)
                 batch.append(processed_data)
@@ -145,6 +170,34 @@ async def refresh_countries(db: Session = Depends(get_db)):
         )
 
 
+# GET /countries/image - MUST be before /{name}
+@app.get("/countries/image")
+async def get_summary_image():
+    """
+    Serve the generated summary image.
+    
+    Returns:
+        PNG image file
+        
+    Raises:
+        404: If image not found
+    """
+    image_path = get_image_path()
+    
+    if not image_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Summary image not found"}
+        )
+    
+    return FileResponse(
+        image_path,
+        media_type="image/png",
+        filename=settings.IMAGE_FILE_NAME
+    )
+
+
+# GET /countries - MUST be before /{name}
 @app.get("/countries", response_model=List[CountryResponse])
 async def get_countries(
     region: Optional[str] = Query(None, description="Filter by region (e.g., Africa, Europe)"),
@@ -180,57 +233,7 @@ async def get_countries(
         )
 
 
-@app.get("/countries/image")
-async def get_summary_image():
-    """
-    Serve the generated summary image.
-    
-    Returns:
-        PNG image file
-        
-    Raises:
-        404: If image not found
-    """
-    image_path = get_image_path()
-    
-    if not image_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Summary image not found"}
-        )
-    
-    return FileResponse(
-        image_path,
-        media_type="image/png",
-        filename=settings.IMAGE_FILE_NAME
-    )
-
-
-@app.get("/countries/{name}", response_model=CountryResponse)
-async def get_country(name: str, db: Session = Depends(get_db)):
-    """
-    Get a specific country by name (case-insensitive).
-    
-    Args:
-        name: Country name
-        
-    Returns:
-        Country data
-        
-    Raises:
-        404: If country not found
-    """
-    country = get_country_by_name(db, name)
-    
-    if not country:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Country not found"}
-        )
-    
-    return CountryResponse.from_orm(country)
-
-
+# DELETE /countries/{name}
 @app.delete("/countries/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_country(name: str, db: Session = Depends(get_db)):
     """
@@ -256,27 +259,30 @@ async def delete_country(name: str, db: Session = Depends(get_db)):
     return None
 
 
-@app.get("/status", response_model=StatusResponse)
-async def get_status(db: Session = Depends(get_db)):
+# GET /countries/{name} - MUST be LAST (catches any country name)
+@app.get("/countries/{name}", response_model=CountryResponse)
+async def get_country(name: str, db: Session = Depends(get_db)):
     """
-    Get total number of countries and last refresh timestamp.
+    Get a specific country by name (case-insensitive).
     
+    Args:
+        name: Country name
+        
     Returns:
-        StatusResponse with total countries and last refresh time
+        Country data
+        
+    Raises:
+        404: If country not found
     """
-    try:
-        total, last_refresh = get_database_status(db)
-        
-        return StatusResponse(
-            total_countries=total,
-            last_refreshed_at=last_refresh
-        )
-        
-    except Exception as e:
+    country = get_country_by_name(db, name)
+    
+    if not country:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "Internal server error", "details": str(e)}
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Country not found"}
         )
+    
+    return CountryResponse.from_orm(country)
 
 
 # Startup and shutdown events
