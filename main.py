@@ -1,137 +1,115 @@
-"""
-Main FastAPI application - CORRECTED VERSION
-"""
-
-from fastapi import FastAPI, HTTPException, Depends, Query, status
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import Optional, List
-from datetime import datetime
-import asyncio
-
 from database import engine, get_db, Base
-from models import CountryDB, CountryResponse, StatusResponse, RefreshResponse
-from services import (
-    fetch_countries_data, fetch_exchange_rates, process_country_data,
-    upsert_country, get_all_countries, get_country_by_name,
-    delete_country_by_name, get_database_status, get_top_countries_by_gdp
-)
-from image_generator import generate_summary_image, get_image_path
-from config import settings
+from models import Country, RefreshMetadata
+import services
+from image_generator import generate_summary_image
+from typing import Optional
+import os
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    description="RESTful API for country data"
-)
+app = FastAPI(title="Country Currency & Exchange API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# ROOT
 @app.get("/")
 def root():
-    return {
-        "message": "Country Currency API",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
+    return {"message": "Country Currency & Exchange API", "status": "running"}
 
-
-# STATUS - different path, no conflict
-@app.get("/status", response_model=StatusResponse)
-def get_status(db: Session = Depends(get_db)):
-    total, last_refresh = get_database_status(db)
-    return StatusResponse(total_countries=total, last_refreshed_at=last_refresh)
-
-
-# REFRESH - BEFORE /{name}
-@app.post("/countries/refresh", response_model=RefreshResponse)
+@app.post("/countries/refresh")
 async def refresh_countries(db: Session = Depends(get_db)):
     try:
-        countries_data, exchange_rates = await asyncio.gather(
-            fetch_countries_data(),
-            fetch_exchange_rates()
-        )
+        countries_data = await services.fetch_countries_data()
+        exchange_rates = await services.fetch_exchange_rates()
         
-        countries_processed = 0
-        for country in countries_data:  # ALL countries, no limit
-            try:
-                processed_data = process_country_data(country, exchange_rates)
-                upsert_country(db, processed_data)
-                countries_processed += 1
-            except Exception as e:
-                print(f"Error: {e}")
-                continue
+        services.refresh_countries(db, countries_data, exchange_rates)
         
-        try:
-            total, last_refresh = get_database_status(db)
-            top_countries = get_top_countries_by_gdp(db, limit=5)
-            if top_countries:
-                generate_summary_image(total, top_countries, last_refresh or datetime.utcnow())
-        except Exception as e:
-            print(f"Image error: {e}")
+        top_countries = db.query(Country).filter(
+            Country.estimated_gdp.isnot(None)
+        ).order_by(Country.estimated_gdp.desc()).limit(5).all()
         
-        return RefreshResponse(
-            message="Countries refreshed",
-            countries_processed=countries_processed,
-            timestamp=datetime.utcnow()
-        )
+        metadata = db.query(RefreshMetadata).first()
+        timestamp = metadata.last_refreshed_at if metadata else None
+        
+        total_countries = db.query(Country).count()
+        generate_summary_image(total_countries, top_countries, timestamp)
+        
+        return {
+            "message": "Countries data refreshed successfully",
+            "total_countries": total_countries,
+            "last_refreshed_at": timestamp.isoformat() if timestamp else None
+        }
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": "Internal error", "details": str(e)})
+        raise HTTPException(status_code=500, detail={"error": "Internal server error", "details": str(e)})
 
-
-# IMAGE - BEFORE /{name}
-@app.get("/countries/image")
-def get_summary_image():
-    image_path = get_image_path()
-    if not image_path:
-        raise HTTPException(status_code=404, detail={"error": "Summary image not found"})
-    return FileResponse(image_path, media_type="image/png", filename=settings.IMAGE_FILE_NAME)
-
-
-# GET ALL - BEFORE /{name}
-@app.get("/countries", response_model=List[CountryResponse])
+@app.get("/countries")
 def get_countries(
     region: Optional[str] = Query(None),
     currency: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    countries = get_all_countries(db=db, region=region, currency=currency, sort=sort)
-    return [CountryResponse.from_orm(c) for c in countries]
+    countries = services.get_all_countries(db, region=region, currency=currency, sort=sort)
+    
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "capital": c.capital,
+            "region": c.region,
+            "population": c.population,
+            "currency_code": c.currency_code,
+            "exchange_rate": c.exchange_rate,
+            "estimated_gdp": c.estimated_gdp,
+            "flag_url": c.flag_url,
+            "last_refreshed_at": c.last_refreshed_at.isoformat() if c.last_refreshed_at else None
+        }
+        for c in countries
+    ]
 
-
-# DELETE - can be anywhere
-@app.delete("/countries/{name}", status_code=204)
-def delete_country(name: str, db: Session = Depends(get_db)):
-    deleted = delete_country_by_name(db, name)
-    if not deleted:
-        raise HTTPException(status_code=404, detail={"error": "Country not found"})
-    return None
-
-
-# GET ONE - MUST BE LAST
-@app.get("/countries/{name}", response_model=CountryResponse)
+@app.get("/countries/{name}")
 def get_country(name: str, db: Session = Depends(get_db)):
-    country = get_country_by_name(db, name)
+    country = services.get_country_by_name(db, name)
     if not country:
         raise HTTPException(status_code=404, detail={"error": "Country not found"})
-    return CountryResponse.from_orm(country)
+    
+    return {
+        "id": country.id,
+        "name": country.name,
+        "capital": country.capital,
+        "region": country.region,
+        "population": country.population,
+        "currency_code": country.currency_code,
+        "exchange_rate": country.exchange_rate,
+        "estimated_gdp": country.estimated_gdp,
+        "flag_url": country.flag_url,
+        "last_refreshed_at": country.last_refreshed_at.isoformat() if country.last_refreshed_at else None
+    }
 
+@app.delete("/countries/{name}")
+def delete_country(name: str, db: Session = Depends(get_db)):
+    deleted = services.delete_country_by_name(db, name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail={"error": "Country not found"})
+    
+    return {"message": f"Country '{name}' deleted successfully"}
+
+@app.get("/status")
+def get_status(db: Session = Depends(get_db)):
+    return services.get_status(db)
+
+@app.get("/countries/image")
+def get_summary_image():
+    image_path = "cache/summary.png"
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail={"error": "Summary image not found"})
+    
+    return FileResponse(image_path, media_type="image/png")
 
 if __name__ == "__main__":
-    import uvicorn, os
-    port = int(os.getenv("PORT", 8080))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    import uvicorn
+    from config import get_settings
+    settings = get_settings()
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, reload=True)
