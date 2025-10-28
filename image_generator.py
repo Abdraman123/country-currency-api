@@ -1,10 +1,8 @@
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
-import os
+from io import BytesIO
 
 def generate_summary_image(total_countries: int, top_countries: list, timestamp: datetime):
-    os.makedirs("cache", exist_ok=True)
-    
     width = 800
     height = 600
     img = Image.new('RGB', (width, height), color='white')
@@ -39,5 +37,7 @@ def generate_summary_image(total_countries: int, top_countries: list, timestamp:
     timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC") if timestamp else "N/A"
     draw.text((50, y_offset), f"Last Refreshed: {timestamp_str}", fill='#7f8c8d', font=body_font)
     
-    img.save("cache/summary.png")
-    return "cache/summary.png"
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    return buffer.getvalue()

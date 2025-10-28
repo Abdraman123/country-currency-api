@@ -1,12 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from database import engine, get_db, Base
-from models import Country, RefreshMetadata
+from models import Country, RefreshMetadata, SummaryImage
 import services
 from image_generator import generate_summary_image
 from typing import Optional
-import os
 
 Base.metadata.create_all(bind=engine)
 
@@ -32,7 +31,15 @@ async def refresh_countries(db: Session = Depends(get_db)):
         timestamp = metadata.last_refreshed_at if metadata else None
         
         total_countries = db.query(Country).count()
-        generate_summary_image(total_countries, top_countries, timestamp)
+        image_data = generate_summary_image(total_countries, top_countries, timestamp)
+        
+        existing_image = db.query(SummaryImage).first()
+        if existing_image:
+            existing_image.image_data = image_data
+        else:
+            new_image = SummaryImage(image_data=image_data)
+            db.add(new_image)
+        db.commit()
         
         return {
             "message": "Countries data refreshed successfully",
@@ -45,12 +52,12 @@ async def refresh_countries(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail={"error": "Internal server error", "details": str(e)})
 
 @app.get("/countries/image")
-def get_summary_image():
-    image_path = "cache/summary.png"
-    if not os.path.exists(image_path):
+def get_summary_image(db: Session = Depends(get_db)):
+    image_record = db.query(SummaryImage).first()
+    if not image_record:
         raise HTTPException(status_code=404, detail={"error": "Summary image not found"})
     
-    return FileResponse(image_path, media_type="image/png")
+    return Response(content=image_record.image_data, media_type="image/png")
 
 @app.get("/status")
 def get_status(db: Session = Depends(get_db)):

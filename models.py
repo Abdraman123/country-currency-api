@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, BigInteger
+from sqlalchemy import Column, Integer, String, Float, DateTime, BigInteger, LargeBinary
 from sqlalchemy.sql import func
 from database import Base
 
@@ -21,3 +21,10 @@ class RefreshMetadata(Base):
     
     id = Column(Integer, primary_key=True)
     last_refreshed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class SummaryImage(Base):
+    __tablename__ = "summary_images"
+    
+    id = Column(Integer, primary_key=True)
+    image_data = Column(LargeBinary, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
