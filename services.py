@@ -202,17 +202,19 @@ def get_all_countries(
     if currency:
         query = query.filter(func.lower(CountryDB.currency_code) == func.lower(currency))
     
-    # Apply sorting - FIX: Handle None values properly
+    # Apply sorting - MySQL compatible
     if sort:
         if sort == "gdp_desc":
-            # Put nulls last, then sort descending
+            # MySQL: Use CASE to put nulls last manually
             query = query.order_by(
-                CountryDB.estimated_gdp.desc().nullslast()
+                CountryDB.estimated_gdp.is_(None),  # Nulls first (False=0, True=1)
+                CountryDB.estimated_gdp.desc()       # Then sort descending
             )
         elif sort == "gdp_asc":
-            # Put nulls first, then sort ascending
+            # MySQL: Put nulls last for ascending too
             query = query.order_by(
-                CountryDB.estimated_gdp.asc().nullsfirst()
+                CountryDB.estimated_gdp.is_not(None),  # Non-nulls first
+                CountryDB.estimated_gdp.asc()
             )
         elif sort == "population_desc":
             query = query.order_by(CountryDB.population.desc())
@@ -222,9 +224,6 @@ def get_all_countries(
             query = query.order_by(CountryDB.name.asc())
         elif sort == "name_desc":
             query = query.order_by(CountryDB.name.desc())
-        else:
-            # Default: no invalid sort parameter error
-            pass
     
     return query.all()
 
