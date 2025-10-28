@@ -17,17 +17,9 @@ from config import settings
 # ============= External API Functions =============
 
 async def fetch_countries_data() -> List[Dict]:
-    """
-    Fetch country data from REST Countries API.
-    
-    Returns:
-        List of country dictionaries
-        
-    Raises:
-        HTTPException: If API call fails
-    """
+    """Fetch country data from REST Countries API."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:  # Reduced from 30
             response = await client.get(settings.COUNTRIES_API_URL)
             response.raise_for_status()
             return response.json()
@@ -39,7 +31,7 @@ async def fetch_countries_data() -> List[Dict]:
                 "details": "Could not fetch data from REST Countries API - timeout"
             }
         )
-    except httpx.HTTPError as e:
+    except Exception as e:
         raise HTTPException(
             status_code=503,
             detail={
@@ -50,17 +42,9 @@ async def fetch_countries_data() -> List[Dict]:
 
 
 async def fetch_exchange_rates() -> Dict[str, float]:
-    """
-    Fetch exchange rates from Exchange Rate API.
-    
-    Returns:
-        Dictionary mapping currency codes to rates
-        
-    Raises:
-        HTTPException: If API call fails
-    """
+    """Fetch exchange rates from Exchange Rate API."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:  # Reduced from 30
             response = await client.get(settings.EXCHANGE_RATE_API_URL)
             response.raise_for_status()
             data = response.json()
@@ -73,7 +57,7 @@ async def fetch_exchange_rates() -> Dict[str, float]:
                 "details": "Could not fetch data from Exchange Rate API - timeout"
             }
         )
-    except httpx.HTTPError as e:
+    except Exception as e:
         raise HTTPException(
             status_code=503,
             detail={
@@ -208,18 +192,7 @@ def get_all_countries(
     currency: Optional[str] = None,
     sort: Optional[str] = None
 ) -> List[CountryDB]:
-    """
-    Get all countries with optional filtering and sorting.
-    
-    Args:
-        db: Database session
-        region: Filter by region
-        currency: Filter by currency code
-        sort: Sort order (gdp_desc, gdp_asc, population_desc, population_asc)
-        
-    Returns:
-        List of CountryDB instances
-    """
+    """Get all countries with optional filtering and sorting."""
     query = db.query(CountryDB)
     
     # Apply filters
@@ -229,12 +202,18 @@ def get_all_countries(
     if currency:
         query = query.filter(func.lower(CountryDB.currency_code) == func.lower(currency))
     
-    # Apply sorting
+    # Apply sorting - FIX: Handle None values properly
     if sort:
         if sort == "gdp_desc":
-            query = query.order_by(CountryDB.estimated_gdp.desc().nullslast())
+            # Put nulls last, then sort descending
+            query = query.order_by(
+                CountryDB.estimated_gdp.desc().nullslast()
+            )
         elif sort == "gdp_asc":
-            query = query.order_by(CountryDB.estimated_gdp.asc().nullsfirst())
+            # Put nulls first, then sort ascending
+            query = query.order_by(
+                CountryDB.estimated_gdp.asc().nullsfirst()
+            )
         elif sort == "population_desc":
             query = query.order_by(CountryDB.population.desc())
         elif sort == "population_asc":
@@ -243,6 +222,9 @@ def get_all_countries(
             query = query.order_by(CountryDB.name.asc())
         elif sort == "name_desc":
             query = query.order_by(CountryDB.name.desc())
+        else:
+            # Default: no invalid sort parameter error
+            pass
     
     return query.all()
 

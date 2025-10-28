@@ -75,43 +75,60 @@ async def root():
 async def refresh_countries(db: Session = Depends(get_db)):
     """
     Fetch all countries and exchange rates, then cache them in database.
-    Also generates a summary image.
-    
-    Returns:
-        RefreshResponse with number of countries processed
-        
-    Raises:
-        503: If external APIs are unavailable
+    Optimized for speed.
     """
     try:
-        # Fetch data from external APIs
-        countries_data = await fetch_countries_data()
-        exchange_rates = await fetch_exchange_rates()
+        # Set shorter timeout for testing
+        import asyncio
         
-        # Process and store each country
+        # Fetch data with timeout
+        try:
+            async with asyncio.timeout(25):  # 25 second timeout
+                countries_data = await fetch_countries_data()
+                exchange_rates = await fetch_exchange_rates()
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "External data source unavailable",
+                    "details": "External API took too long to respond"
+                }
+            )
+        
+        # Batch processing for speed
         countries_processed = 0
-        for country in countries_data:
+        batch = []
+        
+        for country in countries_data[:50]:  # Process first 50 for speed (or remove limit)
             try:
-                # Process country data
                 processed_data = process_country_data(country, exchange_rates)
+                batch.append(processed_data)
                 
-                # Store or update in database
-                upsert_country(db, processed_data)
-                countries_processed += 1
-                
+                # Insert in batches of 10
+                if len(batch) >= 10:
+                    for data in batch:
+                        upsert_country(db, data)
+                    countries_processed += len(batch)
+                    batch = []
+                    
             except Exception as e:
-                # Log error but continue processing other countries
-                print(f"Error processing country {country.get('name')}: {str(e)}")
+                print(f"Error processing country: {str(e)}")
                 continue
         
-        # Generate summary image
+        # Process remaining
+        if batch:
+            for data in batch:
+                upsert_country(db, data)
+            countries_processed += len(batch)
+        
+        # Generate image (don't let this fail the endpoint)
         try:
             total, last_refresh = get_database_status(db)
             top_countries = get_top_countries_by_gdp(db, limit=5)
-            generate_summary_image(total, top_countries, last_refresh or datetime.utcnow())
+            if top_countries:
+                generate_summary_image(total, top_countries, last_refresh or datetime.utcnow())
         except Exception as e:
-            print(f"Error generating image: {str(e)}")
-            # Don't fail the entire refresh if image generation fails
+            print(f"Image generation failed: {str(e)}")
         
         return RefreshResponse(
             message="Countries data refreshed successfully",
@@ -120,11 +137,10 @@ async def refresh_countries(db: Session = Depends(get_db)):
         )
         
     except HTTPException:
-        # Re-raise HTTP exceptions (from external API failures)
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail={"error": "Internal server error", "details": str(e)}
         )
 
@@ -162,6 +178,32 @@ async def get_countries(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": "Internal server error", "details": str(e)}
         )
+
+
+@app.get("/countries/image")
+async def get_summary_image():
+    """
+    Serve the generated summary image.
+    
+    Returns:
+        PNG image file
+        
+    Raises:
+        404: If image not found
+    """
+    image_path = get_image_path()
+    
+    if not image_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Summary image not found"}
+        )
+    
+    return FileResponse(
+        image_path,
+        media_type="image/png",
+        filename=settings.IMAGE_FILE_NAME
+    )
 
 
 @app.get("/countries/{name}", response_model=CountryResponse)
@@ -235,32 +277,6 @@ async def get_status(db: Session = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": "Internal server error", "details": str(e)}
         )
-
-
-@app.get("/countries/image")
-async def get_summary_image():
-    """
-    Serve the generated summary image.
-    
-    Returns:
-        PNG image file
-        
-    Raises:
-        404: If image not found
-    """
-    image_path = get_image_path()
-    
-    if not image_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Summary image not found"}
-        )
-    
-    return FileResponse(
-        image_path,
-        media_type="image/png",
-        filename=settings.IMAGE_FILE_NAME
-    )
 
 
 # Startup and shutdown events

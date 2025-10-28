@@ -10,9 +10,16 @@ from config import settings
 # Create database engine for MySQL
 engine = create_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=False,  # Changed from settings.DEBUG
     pool_pre_ping=True,
-    pool_recycle=3600
+    pool_recycle=3600,
+    pool_size=10,  # Added
+    max_overflow=20,  # Added
+    connect_args={  # Added entire section
+        "connect_timeout": 10,
+        "read_timeout": 30,
+        "write_timeout": 30
+    }
 )
 
 # Create session factory
