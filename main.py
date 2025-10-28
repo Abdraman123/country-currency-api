@@ -184,9 +184,12 @@ async def get_summary_image():
     """
     image_path = get_image_path()
     
-    if not image_path or not os.path.exists(image_path):
-    # ✅ Return a fallback image instead of 404
-      return RedirectResponse("https://upload.wikimedia.org/wikipedia/commons/6/6a/PNG_Test.png")
+    if not image_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Summary image not found"}
+    )
+
     
     return FileResponse(
         image_path,
