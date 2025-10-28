@@ -110,6 +110,6 @@ def get_summary_image():
 
 if __name__ == "__main__":
     import uvicorn
-    from config import get_settings
-    settings = get_settings()
-    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, reload=True)
+    import os
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
