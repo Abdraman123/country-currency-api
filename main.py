@@ -44,6 +44,18 @@ async def refresh_countries(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": "Internal server error", "details": str(e)})
 
+@app.get("/countries/image")
+def get_summary_image():
+    image_path = "cache/summary.png"
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail={"error": "Summary image not found"})
+    
+    return FileResponse(image_path, media_type="image/png")
+
+@app.get("/status")
+def get_status(db: Session = Depends(get_db)):
+    return services.get_status(db)
+
 @app.get("/countries")
 def get_countries(
     region: Optional[str] = Query(None),
@@ -95,18 +107,6 @@ def delete_country(name: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail={"error": "Country not found"})
     
     return {"message": f"Country '{name}' deleted successfully"}
-
-@app.get("/status")
-def get_status(db: Session = Depends(get_db)):
-    return services.get_status(db)
-
-@app.get("/countries/image")
-def get_summary_image():
-    image_path = "cache/summary.png"
-    if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail={"error": "Summary image not found"})
-    
-    return FileResponse(image_path, media_type="image/png")
 
 if __name__ == "__main__":
     import uvicorn
