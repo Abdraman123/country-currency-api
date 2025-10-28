@@ -31,11 +31,19 @@ class Settings:
         "EXCHANGE_RATE_API_URL",
         "https://open.er-api.com/v6/latest/USD"
     )
-    
-    # Image Cache
-    IMAGE_CACHE_DIR: str = os.getenv("IMAGE_CACHE_DIR", "cache")
+
+    # Image Cache (works both locally and on DigitalOcean)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+    # If running on DigitalOcean (detected by environment variable)
+    if os.getenv("DYNO") or os.getenv("PORT"):  
+        IMAGE_CACHE_DIR = "/tmp/cache"
+    else:
+        IMAGE_CACHE_DIR = os.path.join(BASE_DIR, "cache")
+
     IMAGE_FILE_NAME: str = "summary.png"
-    
+    IMAGE_PATH: str = os.path.join(IMAGE_CACHE_DIR, IMAGE_FILE_NAME)
+
     # App Metadata
     APP_NAME: str = "Country Currency API"
     APP_VERSION: str = "1.0.0"
@@ -43,8 +51,7 @@ class Settings:
 
 settings = Settings()
 
-
-# Create cache directory if it doesn't exist
+# ✅ Create cache directory if it doesn't exist
 os.makedirs(settings.IMAGE_CACHE_DIR, exist_ok=True)
 
 
